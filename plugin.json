@@ -1,0 +1,72 @@
+{
+  "id": "hongguo",
+  "name": "红果",
+  "version": "0.3.0",
+  "defaultEnabled": true,
+  "runtime": {
+    "type": "exec",
+    "protocolVersion": 2,
+    "executable": "plugin-hongguo"
+  },
+  "capabilities": [
+    "discover",
+    "search",
+    "rank",
+    "detail",
+    "seasons",
+    "covers",
+    "resolve",
+    "resetDevice",
+    "calendar",
+    "danmaku",
+    "account",
+    "favoritesSync",
+    "reservations"
+  ],
+  "navigation": [
+    {
+      "label": "推荐",
+      "value": "推荐"
+    },
+    {
+      "label": "榜单",
+      "value": "榜单"
+    },
+    {
+      "label": "预约",
+      "value": "预约"
+    },
+    {
+      "label": "收藏",
+      "value": "收藏"
+    },
+    {
+      "label": "历史",
+      "value": "历史"
+    }
+  ],
+  "filters": [
+    {
+      "label": "频道",
+      "value": "channel",
+      "options": [
+        {
+          "label": "精选",
+          "value": ""
+        },
+        {
+          "label": "真人剧",
+          "value": "真人剧"
+        },
+        {
+          "label": "漫剧",
+          "value": "漫剧"
+        },
+        {
+          "label": "找剧",
+          "value": "找剧"
+        }
+      ]
+    }
+  ]
+}
