@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"github.com/shi747826/mygo-plugin-hongguo/internal/cenc"
 )
 
 const (
@@ -98,7 +100,7 @@ func New(ffmpegPath string) (*Manager, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{ctx: ctx, cancel: cancel, closeDone: make(chan struct{}), slots: make(chan struct{}, maxConcurrent), sessions: make(map[string]*Session), origin: "http://" + ln.Addr().String(), ffmpeg: ffmpegPath, directOnly: directOnly, maxBytes: maxFileBytes, timeout: prepareTimeout}
-	m.server = &http.Server{Handler: http.HandlerFunc(m.serve), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	m.server = &http.Server{Handler: withAppCORS(http.HandlerFunc(m.serve)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	go func() { _ = m.server.Serve(ln) }()
 	return m, nil
 }
@@ -142,7 +144,48 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 		return m.register(ctx, s)
 	}
 	if m.directOnly {
-		return nil, ErrUnsupported
+		// Mobile hosts cannot run FFmpeg. A single CENC encrypted stream is
+		// decrypted in Go and served from the loopback server; anything else
+		// (a separate audio track, subsample encryption) stays unsupported.
+		if pb.AudioURL != "" {
+			return nil, ErrUnsupported
+		}
+		if !pb.Protected && !stream.Protected {
+			s.URL = stream.URL
+			return m.register(ctx, s)
+		}
+		key, err := contentKey(pb)
+		if err != nil {
+			// Without a derivable key there is nothing a mobile host can play.
+			return nil, ErrUnsupported
+		}
+		dir, err := os.MkdirTemp("", "hongguo-mobile-")
+		if err != nil {
+			return nil, errors.New("unable to create playback temporary directory")
+		}
+		s.dir, s.file = dir, filepath.Join(dir, "video.mp4")
+		success := false
+		defer func() {
+			if !success {
+				_ = s.Close()
+			}
+		}()
+		data, err := download(ctx, stream.URL, m.maxBytes)
+		if err != nil {
+			return nil, err
+		}
+		plain, err := cenc.Decrypt(data, key)
+		if err != nil {
+			if errors.Is(err, cenc.ErrUnsupported) {
+				return nil, ErrUnsupported
+			}
+			return nil, errors.New("unable to decrypt this stream")
+		}
+		if err := os.WriteFile(s.file, plain, 0o600); err != nil {
+			return nil, errors.New("unable to store the decrypted stream")
+		}
+		success = true
+		return m.register(ctx, s)
 	}
 	if m.ffmpeg == "" {
 		return nil, errors.New("ffmpeg is required to prepare this stream; set MYGO_PLAYER_FFMPEG or install ffmpeg")
@@ -402,4 +445,47 @@ func (m *Manager) Close() error {
 	m.closeErr = errors.Join(errs...)
 	close(m.closeDone)
 	return m.closeErr
+}
+
+// contentKey derives the AES key that decrypts a protected stream.
+func contentKey(pb *model.Playback) ([]byte, error) {
+	copyPB := *pb
+	copyPB.Protected = true
+	derived, err := sdk.ContentKey(&copyPB)
+	if err != nil {
+		return nil, errors.New("unable to derive playback content key")
+	}
+	key, err := hex.DecodeString(derived.Hex)
+	if err != nil || len(key) != 16 {
+		return nil, errors.New("unable to derive playback content key")
+	}
+	return key, nil
+}
+
+// download reads a whole stream into memory, bounded by limit, so it can be
+// decrypted in place before it is stored and served.
+func download(ctx context.Context, raw string, limit int64) ([]byte, error) {
+	if !validURL(raw) {
+		return nil, ErrUnsupported
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return nil, ErrUnsupported
+	}
+	resp, err := (&http.Client{Timeout: networkTimeout}).Do(req)
+	if err != nil {
+		return nil, errors.New("unable to download the stream")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, errors.New("the media server rejected the request")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, errors.New("unable to download the stream")
+	}
+	if int64(len(data)) > limit {
+		return nil, errors.New("the stream is too large to prepare on this device")
+	}
+	return data, nil
 }
