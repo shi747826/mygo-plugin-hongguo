@@ -31,21 +31,28 @@ const (
 
 var ErrClosed = errors.New("playback manager is closed")
 
+// DisableFFmpeg selects direct playback only, without resolving or launching an executable.
+// Mobile callers use this even when an FFmpeg executable exists on the device.
+const DisableFFmpeg = "mobile:no-ffmpeg"
+
+var ErrUnsupported = errors.New("this stream requires FFmpeg; protected or separate audio streams are unsupported in mobile playback")
+
 // Manager owns a loopback HTTP server and all of its prepared files.
 // Close cancels active preparations and releases all sessions.
 type Manager struct {
-	mu        sync.Mutex
-	closed    bool
-	closeDone chan struct{}
-	closeErr  error
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	slots     chan struct{}
-	sessions  map[string]*Session
-	server    *http.Server
-	origin    string
-	ffmpeg    string
+	mu         sync.Mutex
+	closed     bool
+	closeDone  chan struct{}
+	closeErr   error
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	slots      chan struct{}
+	sessions   map[string]*Session
+	server     *http.Server
+	origin     string
+	ffmpeg     string
+	directOnly bool
 	// Limits are private so tests can exercise failure paths cheaply.
 	maxBytes int64
 	timeout  time.Duration
@@ -69,12 +76,16 @@ type Session struct {
 // resolved from the argument, MYGO_PLAYER_FFMPEG, then PATH; it is never downloaded.
 // Direct playback remains available when ffmpeg is not installed.
 func New(ffmpegPath string) (*Manager, error) {
-	if ffmpegPath == "" {
+	directOnly := ffmpegPath == DisableFFmpeg
+	if directOnly {
+		ffmpegPath = ""
+	}
+	if !directOnly && ffmpegPath == "" {
 		ffmpegPath = os.Getenv("MYGO_PLAYER_FFMPEG")
 	}
-	if ffmpegPath == "" {
+	if !directOnly && ffmpegPath == "" {
 		ffmpegPath, _ = exec.LookPath("ffmpeg")
-	} else {
+	} else if !directOnly {
 		resolved, err := exec.LookPath(ffmpegPath)
 		if err != nil {
 			return nil, errors.New("configured ffmpeg executable is unavailable")
@@ -86,7 +97,7 @@ func New(ffmpegPath string) (*Manager, error) {
 		return nil, fmt.Errorf("start playback server: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{ctx: ctx, cancel: cancel, closeDone: make(chan struct{}), slots: make(chan struct{}, maxConcurrent), sessions: make(map[string]*Session), origin: "http://" + ln.Addr().String(), ffmpeg: ffmpegPath, maxBytes: maxFileBytes, timeout: prepareTimeout}
+	m := &Manager{ctx: ctx, cancel: cancel, closeDone: make(chan struct{}), slots: make(chan struct{}, maxConcurrent), sessions: make(map[string]*Session), origin: "http://" + ln.Addr().String(), ffmpeg: ffmpegPath, directOnly: directOnly, maxBytes: maxFileBytes, timeout: prepareTimeout}
 	m.server = &http.Server{Handler: http.HandlerFunc(m.serve), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	go func() { _ = m.server.Serve(ln) }()
 	return m, nil
@@ -129,6 +140,9 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 	if !pb.Protected && !stream.Protected && pb.AudioURL == "" {
 		s.URL = stream.URL
 		return m.register(ctx, s)
+	}
+	if m.directOnly {
+		return nil, ErrUnsupported
 	}
 	if m.ffmpeg == "" {
 		return nil, errors.New("ffmpeg is required to prepare this stream; set MYGO_PLAYER_FFMPEG or install ffmpeg")
