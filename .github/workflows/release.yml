@@ -1,38 +1,104 @@
 name: Release
 on:
   push:
-    tags: ['v*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  darwin-arm64:
+  package:
     runs-on: macos-15
+    env:
+      GOWORK: 'off'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
       - name: Verify tag and manifest version
-        env:
-          TAG: ${{ github.ref_name }}
-        run: python3 -c 'import json,os; assert "v"+json.load(open("plugin.json"))["version"] == os.environ["TAG"]'
+        run: |
+          python3 - <<'PY'
+          import json, os
+          tag = os.environ['GITHUB_REF_NAME']
+          expected = 'v' + json.load(open('plugin.json', encoding='utf-8'))['version']
+          if tag != expected:
+              raise SystemExit(f'Tag {tag} must match plugin.json version {expected}')
+          PY
       - name: Test and vet
-        env:
-          GOWORK: 'off'
         run: |
           go test -race ./...
           go vet ./...
-      - name: Build signed package
+      - name: Package and validate Apple Silicon and Windows x64
         env:
-          GOOS: darwin
-          GOARCH: arm64
-        run: ./scripts/build.sh
-      - name: Create release and upload
+          CGO_ENABLED: '0'
+        run: |
+          GOOS=darwin GOARCH=arm64 ./scripts/build.sh "$RUNNER_TEMP/release"
+          GOOS=windows GOARCH=amd64 ./scripts/build.sh "$RUNNER_TEMP/release"
+          python3 - "$RUNNER_TEMP/release" <<'PY'
+          import json, struct, sys, zipfile
+          from pathlib import Path
+
+          source = json.loads(Path('plugin.json').read_text(encoding='utf-8'))
+          notices = {'LICENSE', 'THIRD_PARTY_NOTICES.md'}
+          notices.update(p.as_posix() for p in Path('licenses').rglob('*') if p.is_file())
+          for target in ('darwin-arm64', 'windows-amd64'):
+              with zipfile.ZipFile(Path(sys.argv[1]) / f"{source['id']}-{target}.zip") as package:
+                  assert package.testzip() is None, target
+                  manifest = json.loads(package.read('plugin.json'))
+                  executable = source['runtime']['executable']
+                  if target == 'windows-amd64':
+                      executable += '.exe'
+                  source_runtime = {**source['runtime'], 'executable': executable}
+                  assert manifest == {**source, 'runtime': source_runtime}, target
+                  assert notices <= set(package.namelist()), target
+                  with package.open(executable) as binary:
+                      header = binary.read(64)
+                      if target == 'darwin-arm64':
+                          assert header[:8] == bytes.fromhex('cffaedfe0c000001'), target
+                      else:
+                          assert header[:2] == b'MZ', target
+                          binary.seek(struct.unpack_from('<I', header, 0x3c)[0])
+                          assert binary.read(6) == b'PE\0\0\x64\x86', target
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-packages
+          path: ${{ runner.temp }}/release/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-packages
+          path: release
+      - name: Publish GitHub Release
+        working-directory: release
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          sha256sum -- *.zip > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != true ]]; then
+              echo "Release $GITHUB_REF_NAME is already published. Use a new version tag."
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" --clobber -- *.zip SHA256SUMS.txt
+            gh release edit "$GITHUB_REF_NAME" --draft=false
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes -- *.zip SHA256SUMS.txt
           fi
-          gh release upload "$GITHUB_REF_NAME" dist/hongguo-darwin-arm64.zip --clobber

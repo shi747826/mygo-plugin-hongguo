@@ -244,6 +244,7 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	cmd := exec.CommandContext(runCtx, m.ffmpeg, args...)
+	configureFFmpegCommand(cmd)
 	// Keep a bounded private diagnostic buffer. Only fixed classifications,
 	// never stderr text or substrings, may cross the Prepare error boundary.
 	stderr := &diagnosticBuffer{}

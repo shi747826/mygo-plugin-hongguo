@@ -15,20 +15,36 @@ cleanup() {
 }
 trap cleanup EXIT
 cd "$root"
-"$go_command" build -trimpath -o "$package_dir/plugin-hongguo" .
-chmod 755 "$package_dir/plugin-hongguo"
+executable=plugin-hongguo
+if [[ "$GOOS" == windows ]]; then
+  executable+=.exe
+fi
+"$go_command" build -trimpath -o "$package_dir/$executable" .
+chmod 755 "$package_dir/$executable"
 if [[ "$GOOS" == darwin ]]; then
   if [[ "$(uname -s)" != Darwin ]]; then
     echo "macOS packaging requires codesign on a macOS host" >&2
     exit 1
   fi
-  codesign --force --sign - "$package_dir/plugin-hongguo"
-  codesign --verify --strict "$package_dir/plugin-hongguo"
+  codesign --force --sign - "$package_dir/$executable"
+  codesign --verify --strict "$package_dir/$executable"
 fi
 cp plugin.json LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+if [[ "$GOOS" == windows ]]; then
+  python3 - "$package_dir/plugin.json" "$executable" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["runtime"]["executable"] = sys.argv[2]
+path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+fi
 cp -R licenses "$package_dir/licenses"
 archive="$output_dir/hongguo-$GOOS-$GOARCH.zip"
 # A fresh temporary archive never retains entries from an older package.
-(cd "$package_dir" && zip -q -r package.zip plugin.json plugin-hongguo LICENSE THIRD_PARTY_NOTICES.md licenses)
+(cd "$package_dir" && zip -q -r package.zip plugin.json "$executable" LICENSE THIRD_PARTY_NOTICES.md licenses)
 cp "$package_dir/package.zip" "$archive"
 printf 'Installable ZIP: %s\n' "$archive"
