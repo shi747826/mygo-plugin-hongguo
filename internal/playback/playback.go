@@ -140,7 +140,9 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 		return nil, errors.New("media URL must use HTTP or HTTPS without credentials")
 	}
 	s := &Session{Definition: stream.Definition, Codec: stream.Codec, manager: m}
-	if !pb.Protected && !stream.Protected && pb.AudioURL == "" {
+	// A direct CDN URL skips FFmpeg, but Windows cannot decode HEVC in WebView2,
+	// so those streams must still go through the transcoding path below.
+	if !pb.Protected && !stream.Protected && pb.AudioURL == "" && !(runtime.GOOS == "windows" && isHEVC(stream.Codec)) {
 		s.URL = stream.URL
 		return m.register(ctx, s)
 	}
@@ -234,13 +236,9 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 	} else {
 		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?")
 	}
-	hevc := false
+	hevc := isHEVC(stream.Codec)
 	// AVFoundation expects the hvc1 sample entry for HEVC in MP4. The service
 	// uses bytevc1 for HEVC; preserve Codec metadata for native capability errors.
-	switch strings.ToLower(strings.TrimSpace(stream.Codec)) {
-	case "bytevc1", "hevc", "h265", "h.265", "hvc1", "hev1":
-		hevc = true
-	}
 	if hevc && runtime.GOOS == "windows" {
 		// WebView2 decodes HEVC only with a separately installed system codec.
 		// Transcoding keeps automatic playback working on a stock Windows.
@@ -301,6 +299,15 @@ waitLoop:
 	}
 	success = true
 	return registered, nil
+}
+
+// isHEVC reports whether a stream uses the HEVC family (the service calls it bytevc1).
+func isHEVC(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "bytevc1", "hevc", "h265", "h.265", "hvc1", "hev1":
+		return true
+	}
+	return false
 }
 
 const diagnosticLimit = 32 << 10

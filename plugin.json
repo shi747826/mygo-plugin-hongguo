@@ -1,7 +1,7 @@
 {
   "id": "hongguo",
   "name": "红果",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "defaultEnabled": true,
   "runtime": {
     "type": "exec",

@@ -1,6 +1,6 @@
 # MyGo 红果插件
 
-独立可执行插件，版本 **0.3.3**，依赖 `openhongguo v0.3.1`（含 PR #13 的 V5 播放与地址解析修复），插件 ID `hongguo`，JSONL 协议 v2。不需要 MyGo 桌面 UI 源码即可构建、测试与发布。
+独立可执行插件，版本 **0.3.4**，依赖 `openhongguo v0.3.1`（含 PR #13 的 V5 播放与地址解析修复），插件 ID `hongguo`，JSONL 协议 v2。不需要 MyGo 桌面 UI 源码即可构建、测试与发布。
 
 ## GitHub 链接安装
 
