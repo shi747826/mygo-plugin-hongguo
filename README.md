@@ -1,6 +1,6 @@
 # MyGo 红果插件
 
-独立可执行插件，版本 **0.3.1**，依赖 `openhongguo v0.3.1`（含 PR #13 的 V5 播放与地址解析修复），插件 ID `hongguo`，JSONL 协议 v2。不需要 MyGo 桌面 UI 源码即可构建、测试与发布。
+独立可执行插件，版本 **0.3.2**，依赖 `openhongguo v0.3.1`（含 PR #13 的 V5 播放与地址解析修复），插件 ID `hongguo`，JSONL 协议 v2。不需要 MyGo 桌面 UI 源码即可构建、测试与发布。
 
 ## GitHub 链接安装
 
@@ -8,9 +8,9 @@
 
 https://github.com/shi747826/mygo-plugin-hongguo
 
-安装器从 release 选择 `darwin-arm64` 对应资产 **hongguo-darwin-arm64.zip**。已发布的旧版本可下载 [v0.3.0 release](https://github.com/shi747826/mygo-plugin-hongguo/releases/tag/v0.3.0) 的 ZIP，在插件页从 ZIP 安装，然后启用插件。仓库为私有，安装机器应先执行 `gh auth login`，登录有仓库读取权限的 GitHub 账号。此安装包支持 Apple Silicon macOS。
+安装器从 release 选择与当前系统匹配的资产：**hongguo-darwin-arm64.zip**（Apple Silicon macOS）或 **hongguo-windows-amd64.zip**（Windows x64）。安装后可以在插件页点击「更新…」检查并安装新版本，更新保留启用状态、收藏、历史与插件数据。仓库为私有，安装机器应先执行 `gh auth login`，登录有仓库读取权限的 GitHub 账号，或设置 `GH_TOKEN`。
 
-ZIP 根目录直接包含 `plugin.json` 和可执行文件 `plugin-hongguo`，并附许可文件；不会套额外顶层目录。macOS 可执行文件使用 ad-hoc codesign；没有 Apple 公证签名。
+ZIP 根目录直接包含 `plugin.json` 和可执行文件（macOS 为 `plugin-hongguo`，Windows 为 `plugin-hongguo.exe`），并附许可文件；不会套额外顶层目录。macOS 可执行文件使用 ad-hoc codesign；没有 Apple 公证签名。
 
 ## 独立构建与验证
 
@@ -23,9 +23,9 @@ go vet ./...
 # 可指定 Go 路径：GO=/absolute/path/to/go ./scripts/build.sh
 ```
 
-产物为 `dist/hongguo-darwin-arm64.zip`。脚本自动探测本机 GOOS/GOARCH；darwin 打包须在 macOS 上执行以完成 codesign。所有构建禁用 Go workspace，不使用 sibling replace 或宿主 internal 包。
+产物为 `dist/hongguo-<系统>-<架构>.zip`；Windows 可用 `GOOS=windows GOARCH=amd64 ./scripts/build.sh` 交叉编译。脚本自动探测本机 GOOS/GOARCH；darwin 打包须在 macOS 上执行以完成 codesign。所有构建禁用 Go workspace，不使用 sibling replace 或宿主 internal 包。
 
-推送与清单版本一致的 `v*` tag 会触发 GitHub Actions，在 macOS 构建 arm64 安装 ZIP 并上传同仓库 release。私有仓库的 release 继承私有访问权限。对应源码是该标签下完整仓库与锁定的 Go 模块依赖。
+推送与清单版本一致的 `v*` tag 会触发 GitHub Actions，在 macOS 与 Linux 上分别构建 arm64 macOS 和 x64 Windows 安装 ZIP，校验清单与架构后上传同仓库 release 及 SHA256SUMS.txt。私有仓库的 release 继承私有访问权限。对应源码是该标签下完整仓库与锁定的 Go 模块依赖。
 
 ## 运行与来源
 
