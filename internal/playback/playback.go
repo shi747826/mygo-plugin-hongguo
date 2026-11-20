@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -233,12 +234,22 @@ func (m *Manager) Prepare(ctx context.Context, pb *model.Playback, quality strin
 	} else {
 		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?")
 	}
-	args = append(args, "-c", "copy")
+	hevc := false
 	// AVFoundation expects the hvc1 sample entry for HEVC in MP4. The service
 	// uses bytevc1 for HEVC; preserve Codec metadata for native capability errors.
 	switch strings.ToLower(strings.TrimSpace(stream.Codec)) {
 	case "bytevc1", "hevc", "h265", "h.265", "hvc1", "hev1":
-		args = append(args, "-tag:v", "hvc1")
+		hevc = true
+	}
+	if hevc && runtime.GOOS == "windows" {
+		// WebView2 decodes HEVC only with a separately installed system codec.
+		// Transcoding keeps automatic playback working on a stock Windows.
+		args = append(args, "-c:a", "copy", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-tag:v", "avc1")
+	} else {
+		args = append(args, "-c", "copy")
+		if hevc {
+			args = append(args, "-tag:v", "hvc1")
+		}
 	}
 	args = append(args, "-movflags", "+faststart", "-fs", fmt.Sprint(m.maxBytes), s.file)
 	runCtx, runCancel := context.WithCancel(ctx)
